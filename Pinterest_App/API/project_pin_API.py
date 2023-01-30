@@ -27,8 +27,6 @@ producer = KafkaProducer(
 @app.post("/pin/")
 def send_to_kafka(item: Data):
     data = dict(item)
-    # print(item)
-    # return item
     producer.send('pinterest-topic', data)
     producer.flush()
 
