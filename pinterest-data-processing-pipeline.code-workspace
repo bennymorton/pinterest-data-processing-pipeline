@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../pinterest_User_Emulation"
+		},
+		{
+			"path": "../../../airflow/dags"
+		}
+	],
+	"settings": {}
+}

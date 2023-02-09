@@ -1,3 +1,6 @@
+# Using FastAPI and uvicorn to post data from localhost:8000/pin/ (user emulation script)
+# to a Kafka producer
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
@@ -29,7 +32,6 @@ def send_to_kafka(item: Data):
     data = dict(item)
     producer.send('pinterest-topic', data)
     producer.flush()
-
 
 if __name__ == '__main__':
     uvicorn.run("project_pin_API:app", host="localhost", port=8000)
