@@ -22,3 +22,9 @@ The batch data is ingested using a FastAPI and Kafka and then stored in an AWS S
 8. Integrate Kafka and Spark ready for the streaming layer
 9. Carry out the same cleaning jobs on the streaming layer, using Spark streaming
 10. Send the streaming data to long term storage in a Postgres database
+
+## Recent developments
+**Commit update 21/02/23**
+- logical renaming of variables and functions in streaming_consumer 
+- abstraction of cleaning methods
+- added docstrings for each method
