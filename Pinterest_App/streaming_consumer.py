@@ -1,7 +1,9 @@
-# Spark streaming script to:
-#   parse kafka streaming messages
-#   clean data
-#   display rolling aggregations 
+''' 
+Spark streaming programme to:
+    - parse kafka streaming messages
+    - clean data
+    - display rolling aggregations
+'''
 
 from pyspark.sql import SparkSession
 from pyspark.sql.types import *
@@ -10,9 +12,6 @@ import os
 
 os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.1,org.postgresql:postgresql:42.2.10 pyspark-shell'
 
-kafka_topic_name = 'pinterest-topic'
-kafka_bootstrap_servers = 'localhost:9092'
-
 spark = SparkSession \
     .builder \
     .appName('Kafka') \
@@ -20,7 +19,10 @@ spark = SparkSession \
 
 spark.sparkContext.setLogLevel("ERROR")
 
-stream_df = spark \
+kafka_topic_name = 'pinterest-topic'
+kafka_bootstrap_servers = 'localhost:9092'
+
+df = spark \
     .readStream \
     .format('Kafka') \
     .option('kafka.bootstrap.servers', kafka_bootstrap_servers) \
@@ -29,7 +31,7 @@ stream_df = spark \
     .load()
 
 # unpack value info from kafka message 
-stream_df = stream_df.selectExpr('CAST(value as STRING)')
+df = df.selectExpr('CAST(value as STRING)')
 
 df_schema = StructType(
     [StructField('index', StringType()),
@@ -43,81 +45,93 @@ df_schema = StructType(
     StructField('image_src', StringType()),
     StructField('downloaded', StringType()),
     StructField('save_location', StringType()),
-    StructField('category', StringType())])
+    StructField('category', StringType())]
+    )
 
 # unpack json data into organised dataframe, using the above schema
-stream_df = stream_df \
-    .withColumn('value',from_json(stream_df.value, df_schema).alias('value')) \
+df = df \
+    .withColumn('value',from_json(df.value, df_schema).alias('value')) \
     .select('value.*')
 
-# CLEANING FUNCTIONS
-def save_location_strip(stream_df: DataFrame):
-    stream_df = stream_df.withColumn('save_location', expr("ltrim('Local save in ', ltrim(save_location))"))
-    return stream_df
+class Clean:
+    # def __init__(self, df):
+    #     self.df = df
 
-def boolean_downloaded(stream_df: DataFrame):
-    stream_df = stream_df.withColumn('downloaded',col('downloaded').cast(BooleanType()))
-    return stream_df
+    def cast_column(self, df, column, datatype):
+        self.df = df
+        self.column = column
+        self.datatype = datatype
+        self.df = self.df.withColumn(column,col(column).cast(datatype))
+        return self.df
 
-def integer_followercount(stream_df: DataFrame):
-    stream_df = stream_df \
-        .withColumn('follower_count_unit', 
-            when(stream_df.follower_count.contains('k'), 'k')
-            .when(stream_df.follower_count.contains('M'), 'm')
-            .when(stream_df.follower_count.contains('B'), 'b')
-            .otherwise('n')
-        )
+    def strip_save_location(self, df):
+        '''Remove the unnecessary characters from the 'save_location' column'''
+        self.df = df
+        self.df = self.df.withColumn('save_location', expr("ltrim('Local save in ', ltrim(save_location))"))
+        return self.df
 
-    stream_df = stream_df \
-        .withColumn("follower_count", expr("rtrim('k', rtrim(follower_count))")) \
-        .withColumn("follower_count", expr("rtrim('B', rtrim(follower_count))")) \
-        .withColumn("follower_count", expr("rtrim('M', rtrim(follower_count))"))
+    def regulate_follower_count(self, df):
+        '''Regulate the different units of the column 'follower_count',
+            then cast to integer'''
+        self.df = df
 
-    stream_df = stream_df \
-        .withColumn('follower_count',
-            when(stream_df.follower_count_unit == 'k', (stream_df.follower_count*1000)) 
-            .when(stream_df.follower_count_unit == 'm', (stream_df.follower_count*1000000)) 
-            .when(stream_df.follower_count_unit == 'b', (stream_df.follower_count*1000000000)) 
-            .otherwise(stream_df.follower_count)
-        ).withColumn("follower_count",col('follower_count').cast(IntegerType()))
+        # create new column 'follower_count_unit' and fill it with whatever unit 'follower_count' is
+        self.df = self.df \
+            .withColumn('follower_count_unit', 
+                when(self.df.follower_count.contains('k'), 'k')
+                .when(self.df.follower_count.contains('M'), 'm')
+                .when(self.df.follower_count.contains('B'), 'b')
+                .otherwise('n')
+            )
+        
+        # trim the unit letter off the 'follower_count'
+        self.df = self.df \
+            .withColumn("follower_count", expr("rtrim('k', rtrim(follower_count))")) \
+            .withColumn("follower_count", expr("rtrim('B', rtrim(follower_count))")) \
+            .withColumn("follower_count", expr("rtrim('M', rtrim(follower_count))"))
 
-    stream_df = stream_df.drop(stream_df.follower_count_unit)
-    return stream_df
+        # convert 'follower_count' to correct number of followers based on unit column
+        self.df = self.df \
+            .withColumn('follower_count',
+                when(self.df.follower_count_unit == 'k', (self.df.follower_count*1000)) 
+                .when(self.df.follower_count_unit == 'm', (self.df.follower_count*1000000)) 
+                .when(self.df.follower_count_unit == 'b', (self.df.follower_count*1000000000)) 
+                .otherwise(self.df.follower_count)
+            )
+        
+        self.df = self.df.drop(self.df.follower_count_unit)
+        return self.df
 
-def integer_index(stream_df: DataFrame):
-    stream_df = stream_df \
-        .withColumn("index",col('index').cast(IntegerType()))
-    return stream_df
+    def tag_list_nones(self, df):
+        '''Remove invalid data from 'tag_list' column'''
+        self.df = df
+        self.df = self.df \
+            .withColumn('tag_list',when(self.df.tag_list == 'N,o, ,T,a,g,s, ,A,v,a,i,l,a,b,l,e', None) \
+            .otherwise(self.df.tag_list))
+        return self.df
 
-def tag_list_nones(stream_df: DataFrame):
-    stream_df = stream_df \
-        .withColumn('tag_list',when(stream_df.tag_list == 'N,o, ,T,a,g,s, ,A,v,a,i,l,a,b,l,e', None) \
-        .otherwise(stream_df.tag_list))
-    return stream_df
-
-def remove_null_rows_and_columns(stream_df: DataFrame):
-    stream_df = stream_df.na.drop(subset='tag_list')
-    stream_df = stream_df.drop(stream_df.poster_name)
-    return stream_df
+    def remove_null_rows_and_columns(self, df):
+        self.df = df
+        self.df = self.df.na.drop(subset='tag_list')
+        self.df = self.df.drop(self.df.poster_name)
+        return self.df
 
 # WINDOW AGGREGATIONS
 # 1. sum of followersl in each category in the last x minutes. percentage?
 # 2. number of posts per category
-aggregation = stream_df \
-    .groupBy(window("category", "10 second")) \
-    .count()
 
-def cleaning_and_writing(stream_df: DataFrame, batch_id):
-    # calling of cleaning functions
-    stream_df = save_location_strip(stream_df)
-    stream_df = boolean_downloaded(stream_df)
-    stream_df = integer_followercount(stream_df)
-    stream_df = integer_index(stream_df)
-    stream_df = tag_list_nones(stream_df)
-    stream_df = remove_null_rows_and_columns(stream_df)
-    print(aggregation.show())
-    # write to postgres
-    stream_df.write \
+def foreach_func(df, batch_id):
+    '''Function called in the writestream foreachBatch to clean then send data to postgres sink'''
+    clean = Clean()
+    df = clean.strip_save_location(df)
+    df = clean.regulate_follower_count(df)
+    df = clean.cast_column(df, 'follower_count', IntegerType()) 
+    df = clean.cast_column(df, 'index', IntegerType()) 
+    df = clean.cast_column(df, 'downloaded', BooleanType()) 
+    df = clean.tag_list_nones(df)
+    df = clean.remove_null_rows_and_columns(df)
+
+    df.write \
         .mode('append') \
         .format('jdbc') \
         .option("url", 'jdbc:postgresql://localhost:5432/pinterest_streaming') \
@@ -126,10 +140,9 @@ def cleaning_and_writing(stream_df: DataFrame, batch_id):
         .option("user", "postgres") \
         .option("password", "postgres") \
         .save()
-
-stream_df \
-    .writeStream \
-    .foreachBatch(cleaning_and_writing) \
+    
+df.writeStream \
+    .foreachBatch(foreach_func) \
     .outputMode('append') \
     .start() \
     .awaitTermination()
